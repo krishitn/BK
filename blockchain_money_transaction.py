@@ -1,251 +1,217 @@
-"""
-Simple Blockchain Money Transaction (Python)
-File: blockchain_money_transaction.py
-
-This is a self-contained, educational blockchain implementation with:
-- Wallets using ECDSA key pairs
-- Signed transactions
-- Proof-of-Work mining
-- Simple in-memory ledger and balance calculation
-
-Dependencies:
-- ecdsa  (install with: pip install ecdsa)
-
-How to run:
-1. pip install ecdsa
-2. python3 blockchain_money_transaction.py
-
-How to put on GitHub (quick steps):
-1. git init
-2. git add blockchain_money_transaction.py
-3. git commit -m "Add simple blockchain money transaction demo"
-4. Create a new repository on GitHub (via website) and follow the remote add/push commands GitHub gives you, e.g.:
-   git remote add origin https://github.com/<username>/<repo>.git
-   git branch -M main
-   git push -u origin main
-
-Note: This implementation is for learning and demonstration purposes only. Do NOT use this in production.
-"""
-
-import time
-import json
 import hashlib
-import binascii
-from ecdsa import SigningKey, VerifyingKey, SECP256k1, BadSignatureError
-from typing import List
+import time
+import tkinter as tk
+from tkinter import ttk, messagebox
 
 
-class Wallet:
-    """Create a wallet with ECDSA secp256k1 keypair."""
-    def __init__(self):
-        self._signing_key = SigningKey.generate(curve=SECP256k1)
-        self._verifying_key = self._signing_key.get_verifying_key()
-
-    @property
-    def private_key(self) -> str:
-        return binascii.hexlify(self._signing_key.to_string()).decode()
-
-    @property
-    def public_key(self) -> str:
-        return binascii.hexlify(self._verifying_key.to_string()).decode()
-
-    def sign(self, message: str) -> str:
-        """Sign a UTF-8 message (string) and return signature hex."""
-        sig = self._signing_key.sign(message.encode())
-        return binascii.hexlify(sig).decode()
-
-    def export_keys(self) -> dict:
-        return {"private_key": self.private_key, "public_key": self.public_key}
+# =======================
+# Utility Functions
+# =======================
+def sha256(data: str) -> str:
+    return hashlib.sha256(data.encode()).hexdigest()
 
 
+def now() -> int:
+    return int(time.time())
+
+
+# =======================
+# Transaction Class
+# =======================
 class Transaction:
-    """A transaction: sender_pub -> recipient_pub : amount with signature."""
-    def __init__(self, sender_pub: str, recipient_pub: str, amount: float, signature: str = None):
-        self.sender_pub = sender_pub
-        self.recipient_pub = recipient_pub
+    def __init__(self, sender: str, receiver: str, amount: float):
+        self.sender = sender
+        self.receiver = receiver
         self.amount = amount
-        self.signature = signature
-        self.timestamp = time.time()
 
-    def to_dict(self) -> dict:
-        return {
-            "sender_pub": self.sender_pub,
-            "recipient_pub": self.recipient_pub,
-            "amount": self.amount,
-            "timestamp": self.timestamp,
-        }
-
-    def sign_transaction(self, signing_key_hex: str):
-        """Sign using a hex private key (must match sender_pub)."""
-        sk = SigningKey.from_string(binascii.unhexlify(signing_key_hex), curve=SECP256k1)
-        message = json.dumps(self.to_dict(), sort_keys=True)
-        sig = sk.sign(message.encode())
-        self.signature = binascii.hexlify(sig).decode()
-
-    def is_valid(self) -> bool:
-        # If it's a mining reward, sender_pub is set to 'SYSTEM' and no signature needed
-        if self.sender_pub == 'SYSTEM':
-            return True
-        if not self.signature:
-            return False
-        try:
-            vk = VerifyingKey.from_string(binascii.unhexlify(self.sender_pub), curve=SECP256k1)
-            message = json.dumps(self.to_dict(), sort_keys=True).encode()
-            vk.verify(binascii.unhexlify(self.signature), message)
-            return True
-        except (BadSignatureError, Exception):
-            return False
+    def __repr__(self):
+        return f"{self.sender} -> {self.receiver}: ₹{self.amount}"
 
 
+# =======================
+# Block Class
+# =======================
 class Block:
-    def __init__(self, index: int, transactions: List[Transaction], previous_hash: str = ''):
+    def __init__(self, index: int, transactions: list, prev_hash: str, difficulty: int = 3):
         self.index = index
-        self.timestamp = time.time()
         self.transactions = transactions
-        self.previous_hash = previous_hash
+        self.timestamp = now()
+        self.prev_hash = prev_hash
         self.nonce = 0
-        self.hash = self.calculate_hash()
-
-    def calculate_hash(self) -> str:
-        block_string = json.dumps({
-            "index": self.index,
-            "timestamp": self.timestamp,
-            "transactions": [t.to_dict() | {"signature": t.signature} for t in self.transactions],
-            "previous_hash": self.previous_hash,
-            "nonce": self.nonce
-        }, sort_keys=True)
-        return hashlib.sha256(block_string.encode()).hexdigest()
-
-    def mine(self, difficulty: int):
-        target = '0' * difficulty
-        while not self.hash.startswith(target):
-            self.nonce += 1
-            self.hash = self.calculate_hash()
-
-
-class Blockchain:
-    def __init__(self, difficulty: int = 3, mining_reward: float = 50.0):
-        self.chain: List[Block] = []
         self.difficulty = difficulty
-        self.pending_transactions: List[Transaction] = []
-        self.mining_reward = mining_reward
-        self.create_genesis_block()
+        self.hash = self.mine_block()
 
-    def create_genesis_block(self):
-        genesis = Block(0, [], '0')
-        genesis.hash = genesis.calculate_hash()
-        self.chain.append(genesis)
+    def compute_hash(self) -> str:
+        tx_str = "".join(str(tx) for tx in self.transactions)
+        data = f"{self.index}{self.timestamp}{self.prev_hash}{tx_str}{self.nonce}"
+        return sha256(data)
 
-    def get_latest_block(self) -> Block:
-        return self.chain[-1]
+    def mine_block(self) -> str:
+        prefix = "0" * self.difficulty
+        while True:
+            h = self.compute_hash()
+            if h.startswith(prefix):
+                return h
+            self.nonce += 1
 
-    def add_transaction(self, transaction: Transaction) -> bool:
-        if not transaction.sender_pub or not transaction.recipient_pub:
-            raise ValueError('Transaction must include sender and recipient public keys')
-        if not transaction.is_valid():
-            print('Invalid transaction signature. Rejecting transaction.')
+
+# =======================
+# Blockchain Class
+# =======================
+class Blockchain:
+    def __init__(self):
+        self.chain = [self.create_genesis_block()]
+        self.pending_txs = []
+        self.difficulty = 3
+        self.balances = {"BANK": 1_000_000.0}
+
+    def create_genesis_block(self) -> Block:
+        return Block(0, ["Genesis Block"], "0")
+
+    def get_balance(self, user: str) -> float:
+        return self.balances.get(user, 0.0)
+
+    def update_balances(self, txs):
+        for tx in txs:
+            if isinstance(tx, Transaction):
+                self.balances[tx.sender] = self.balances.get(tx.sender, 0.0) - tx.amount
+                self.balances[tx.receiver] = self.balances.get(tx.receiver, 0.0) + tx.amount
+
+    def add_transaction(self, tx: Transaction):
+        if tx.sender != "BANK" and self.get_balance(tx.sender) < tx.amount:
             return False
-        # Optional: check sender balance to prevent overspend
-        sender_balance = self.get_balance_of_address(transaction.sender_pub)
-        if transaction.sender_pub != 'SYSTEM' and sender_balance < transaction.amount:
-            print('Sender has insufficient balance. Rejecting transaction.')
-            return False
-        self.pending_transactions.append(transaction)
+        self.pending_txs.append(tx)
         return True
 
-    def mine_pending_transactions(self, miner_address: str):
-        # Reward transaction (from SYSTEM)
-        reward_tx = Transaction('SYSTEM', miner_address, self.mining_reward)
-        self.pending_transactions.append(reward_tx)
+    def mine_pending_txs(self):
+        if not self.pending_txs:
+            return None
 
-        block = Block(len(self.chain), list(self.pending_transactions), self.get_latest_block().hash)
-        print(f'Mining block {block.index} with {len(block.transactions)} transactions...')
-        block.mine(self.difficulty)
-        print(f'Block mined: {block.hash}')
+        prev_hash = self.chain[-1].hash
+        new_block = Block(len(self.chain), self.pending_txs, prev_hash, self.difficulty)
+        self.chain.append(new_block)
+        self.update_balances(self.pending_txs)
+        self.pending_txs = []
+        return new_block
 
-        self.chain.append(block)
-        self.pending_transactions = []
 
-    def get_balance_of_address(self, address: str) -> float:
-        balance = 0.0
-        for block in self.chain:
+# =======================
+# GUI Application
+# =======================
+class BlockchainApp:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("🏦 Bank Blockchain GUI")
+        self.root.geometry("800x600")
+        self.root.resizable(False, False)
+
+        self.chain = Blockchain()
+
+        self.setup_ui()
+
+    def setup_ui(self):
+        # Title
+        title = tk.Label(self.root, text="🏦 BankChain - Blockchain Banking System",
+                         font=("Arial", 18, "bold"))
+        title.pack(pady=10)
+
+        # Transaction frame
+        frame = ttk.LabelFrame(self.root, text="New Transaction", padding=10)
+        frame.pack(padx=10, pady=10, fill="x")
+
+        ttk.Label(frame, text="Sender:").grid(row=0, column=0, padx=5, pady=5)
+        self.sender_entry = ttk.Entry(frame, width=20)
+        self.sender_entry.grid(row=0, column=1, padx=5, pady=5)
+
+        ttk.Label(frame, text="Receiver:").grid(row=0, column=2, padx=5, pady=5)
+        self.receiver_entry = ttk.Entry(frame, width=20)
+        self.receiver_entry.grid(row=0, column=3, padx=5, pady=5)
+
+        ttk.Label(frame, text="Amount (₹):").grid(row=0, column=4, padx=5, pady=5)
+        self.amount_entry = ttk.Entry(frame, width=10)
+        self.amount_entry.grid(row=0, column=5, padx=5, pady=5)
+
+        ttk.Button(frame, text="Add Transaction", command=self.add_transaction).grid(row=0, column=6, padx=10)
+
+        # Action buttons
+        btn_frame = tk.Frame(self.root)
+        btn_frame.pack(pady=10)
+
+        ttk.Button(btn_frame, text="Mine Block", command=self.mine_block).grid(row=0, column=0, padx=10)
+        ttk.Button(btn_frame, text="Show Balances", command=self.show_balances).grid(row=0, column=1, padx=10)
+        ttk.Button(btn_frame, text="Show Blockchain", command=self.show_chain).grid(row=0, column=2, padx=10)
+
+        # Output area
+        self.output = tk.Text(self.root, height=20, width=95, wrap="word", font=("Courier", 10))
+        self.output.pack(padx=10, pady=10)
+
+        self.log("System ready. BANK starts with ₹1,000,000 reserve.\n")
+
+    # ==========================
+    # Blockchain GUI Functions
+    # ==========================
+    def log(self, message: str):
+        self.output.insert(tk.END, message + "\n")
+        self.output.see(tk.END)
+
+    def add_transaction(self):
+        sender = self.sender_entry.get().strip()
+        receiver = self.receiver_entry.get().strip()
+        try:
+            amount = float(self.amount_entry.get().strip())
+        except ValueError:
+            messagebox.showerror("Error", "Please enter a valid amount.")
+            return
+
+        if not sender or not receiver:
+            messagebox.showerror("Error", "Sender and Receiver are required.")
+            return
+
+        tx = Transaction(sender, receiver, amount)
+        if self.chain.add_transaction(tx):
+            self.log(f"🧾 Added: {tx}")
+            self.sender_entry.delete(0, tk.END)
+            self.receiver_entry.delete(0, tk.END)
+            self.amount_entry.delete(0, tk.END)
+        else:
+            messagebox.showwarning("Insufficient Funds", f"{sender} has insufficient balance.")
+
+    def mine_block(self):
+        if not self.chain.pending_txs:
+            messagebox.showinfo("Mining", "No transactions to mine.")
+            return
+
+        self.log("\n⛏️ Mining new block, please wait...")
+        self.root.update()
+
+        block = self.chain.mine_pending_txs()
+        if block:
+            self.log(f"✅ Block {block.index} mined! Hash: {block.hash[:16]}...\n")
+        else:
+            messagebox.showinfo("Mining", "No block mined.")
+
+    def show_balances(self):
+        balances = "\n💰 Account Balances:\n"
+        for user, bal in sorted(self.chain.balances.items()):
+            balances += f"  {user}: ₹{bal}\n"
+        self.log(balances)
+
+    def show_chain(self):
+        text = "\n📜 Blockchain Ledger:\n"
+        for block in self.chain.chain:
+            text += f"\nBlock {block.index} | Time: {time.ctime(block.timestamp)}\n"
+            text += f"Prev Hash: {block.prev_hash[:15]}...\n"
+            text += f"Hash: {block.hash[:15]}...\n"
+            text += "Transactions:\n"
             for tx in block.transactions:
-                if tx.sender_pub == address:
-                    balance -= tx.amount
-                if tx.recipient_pub == address:
-                    balance += tx.amount
-        # pending txs also considered (optional)
-        for tx in self.pending_transactions:
-            if tx.sender_pub == address:
-                balance -= tx.amount
-            if tx.recipient_pub == address:
-                balance += tx.amount
-        return balance
-
-    def is_chain_valid(self) -> bool:
-        for i in range(1, len(self.chain)):
-            current = self.chain[i]
-            previous = self.chain[i - 1]
-
-            if current.hash != current.calculate_hash():
-                print('Invalid block hash at index', i)
-                return False
-            if current.previous_hash != previous.hash:
-                print('Invalid chain linkage at index', i)
-                return False
-            # validate transactions in block
-            for tx in current.transactions:
-                if not tx.is_valid():
-                    print('Invalid transaction in block', i)
-                    return False
-        return True
+                text += f"  - {tx}\n"
+        self.log(text)
 
 
-# ---------------------- Demo / Usage ----------------------
-if __name__ == '__main__':
-    print('\n=== Simple Blockchain Money Transaction Demo ===\n')
-
-    # Create a blockchain
-    demo_chain = Blockchain(difficulty=3, mining_reward=100.0)
-
-    # Create wallets
-    alice = Wallet()
-    bob = Wallet()
-    miner = Wallet()
-
-    print('Alice public key (short):', alice.public_key[:40], '...')
-    print('Bob public key (short):', bob.public_key[:40], '...')
-    print('Miner public key (short):', miner.public_key[:40], '...')
-
-    # Create a transaction: Alice -> Bob : 10
-    tx1 = Transaction(alice.public_key, bob.public_key, 10.0)
-    tx1.sign_transaction(alice.private_key)
-    added = demo_chain.add_transaction(tx1)
-    print('Transaction added to pool?', added)
-
-    # Mine pending transactions by miner
-    demo_chain.mine_pending_transactions(miner.public_key)
-
-    print('\nBalances after 1st mining:')
-    print('Alice:', demo_chain.get_balance_of_address(alice.public_key))
-    print('Bob:', demo_chain.get_balance_of_address(bob.public_key))
-    print('Miner:', demo_chain.get_balance_of_address(miner.public_key))
-
-    # Create more transactions
-    tx2 = Transaction(bob.public_key, alice.public_key, 4.5)
-    tx2.sign_transaction(bob.private_key)
-    demo_chain.add_transaction(tx2)
-
-    # Mine again
-    demo_chain.mine_pending_transactions(miner.public_key)
-
-    print('\nBalances after 2nd mining:')
-    print('Alice:', demo_chain.get_balance_of_address(alice.public_key))
-    print('Bob:', demo_chain.get_balance_of_address(bob.public_key))
-    print('Miner:', demo_chain.get_balance_of_address(miner.public_key))
-
-    # Chain validity check
-    print('\nIs chain valid?', demo_chain.is_chain_valid())
-
-    print('\nYou can export the keys printed above to reuse wallets in future runs.\n')
-
+# =======================
+# Entry Point
+# =======================
+if __name__ == "__main__":
+    root = tk.Tk()
+    app = BlockchainApp(root)
+    root.mainloop()
