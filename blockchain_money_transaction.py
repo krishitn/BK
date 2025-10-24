@@ -202,7 +202,7 @@ class BlockchainApp:
             text += f"\nBlock {block.index} | Time: {time.ctime(block.timestamp)}\n"
             text += f"Prev Hash: {block.prev_hash[:15]}...\n"
             text += f"Hash: {block.hash[:15]}...\n"
-            text += "Transactions:\n"
+            text += "Transactions:\n" 
             for tx in block.transactions:
                 text += f"  - {tx}\n"
         self.log(text)
